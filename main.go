@@ -40,9 +40,9 @@ func main() {
 	for j := 0; j < *numberOfRequests; j++ {
 		requestChannel <- j
 	}
+	close(requestChannel)
 
 	result := <-resultChannel
-	close(requestChannel)
 	close(responseChannel)
 
 	log.Printf("Total Requests: %d\n", result.Total)
@@ -101,6 +101,7 @@ func aggregatingThread(responseChannel <-chan Response, resultChannel chan<- Res
 
 		if result.Total >= expectedRequests {
 			resultChannel <- result
+			close(resultChannel)
 		}
 	}
 }
