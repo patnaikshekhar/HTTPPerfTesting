@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
@@ -45,14 +46,21 @@ func main() {
 	result := <-resultChannel
 	close(responseChannel)
 
-	log.Printf("Total Requests: %d\n", result.Total)
-	log.Printf("Total Passed  : %d\n", result.TotalPass)
-	log.Printf("Total Failed  : %d\n", result.Total-result.TotalPass)
-	log.Printf("Pass Percent  : %.2f%%\n", result.passPercentage())
+	log.Printf("Total Requests        : %d\n", result.Total)
+	log.Printf("Total Passed          : %d\n", result.TotalPass)
+	log.Printf("Total Failed          : %d\n", result.Total-result.TotalPass)
+	log.Printf("Pass Percent          : %.2f%%\n", result.passPercentage())
+	log.Printf("Average Time per req  : %.4fs\n", result.averageTimeTaken())
+	log.Printf("Slowest Request       : %.4fs\n", result.HighestTimeTaken)
+	log.Printf("Fastest Request       : %.4fs\n", result.LowestTimeTaken)
+	log.Printf("Total Time Taken      : %.4fs\n", result.timeElapsed())
 }
 
 func sendingThread(url string, requestChannel <-chan int, responseChannel chan<- Response) {
 	for range requestChannel {
+
+		startTime := time.Now()
+
 		res, err := http.Get(url)
 
 		pass := false
@@ -69,8 +77,9 @@ func sendingThread(url string, requestChannel <-chan int, responseChannel chan<-
 		}
 
 		responseChannel <- Response{
-			Code: statusCode,
-			Pass: pass,
+			Code:      statusCode,
+			Pass:      pass,
+			TimeTaken: time.Now().Sub(startTime).Seconds(),
 		}
 	}
 }
@@ -81,10 +90,21 @@ func aggregatingThread(responseChannel <-chan Response, resultChannel chan<- Res
 		TotalPass: 0,
 		Total:     0,
 		Expected:  expectedRequests,
+		StartTime: time.Now(),
+		LowestTimeTaken: 9999,
+		HighestTimeTaken: -1,
 	}
 
 	for res := range responseChannel {
 		result.Total++
+		result.TotalTimeTaken = result.TotalTimeTaken + res.TimeTaken
+		if result.LowestTimeTaken > res.TimeTaken {
+			result.LowestTimeTaken = res.TimeTaken
+		}
+
+		if result.HighestTimeTaken < res.TimeTaken {
+			result.HighestTimeTaken = res.TimeTaken
+		}
 
 		if res.Pass {
 			result.TotalPass = result.TotalPass + 1
@@ -100,6 +120,7 @@ func aggregatingThread(responseChannel <-chan Response, resultChannel chan<- Res
 		}
 
 		if result.Total >= expectedRequests {
+			result.EndTime = time.Now()
 			resultChannel <- result
 			close(resultChannel)
 		}
@@ -107,14 +128,20 @@ func aggregatingThread(responseChannel <-chan Response, resultChannel chan<- Res
 }
 
 type Response struct {
-	Code int
-	Pass bool
+	Code      int
+	Pass      bool
+	TimeTaken float64
 }
 
 type Result struct {
-	TotalPass int
-	Total     int
-	Expected  int
+	TotalPass        int
+	Total            int
+	Expected         int
+	StartTime        time.Time
+	EndTime          time.Time
+	TotalTimeTaken   float64
+	LowestTimeTaken  float64
+	HighestTimeTaken float64
 }
 
 func (r Result) passPercentage() float32 {
@@ -123,4 +150,13 @@ func (r Result) passPercentage() float32 {
 
 func (r Result) donePercentage() int {
 	return int((float32(r.Total) / float32(r.Expected)) * 100)
+}
+
+func (r Result) timeElapsed() float64 {
+	delta := r.EndTime.Sub(r.StartTime)
+	return delta.Seconds()
+}
+
+func (r Result) averageTimeTaken() float64 {
+	return r.TotalTimeTaken / float64(r.Total)
 }
